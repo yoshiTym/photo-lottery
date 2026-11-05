@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>画像くじ引きアプリ</title>
+  <!-- HEIC/HEIF (iPhone/iPad標準写真形式) をブラウザで表示可能にするライブラリ -->
+  <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
+  <style>
+    * {
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+    }
+    body, html {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: #0b0f19;
+      color: #ffffff;
+      overflow: hidden;
+      touch-action: manipulation;
+    }
+
+    /* 設定エリア */
+    #top-bar {
+      position: absolute;
+      top: 15px;
+      left: 15px;
+      z-index: 100;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      background: rgba(15, 23, 42, 0.75);
+      padding: 8px 16px;
+      border-radius: 8px;
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    .btn {
+      background: #2563eb;
+      color: white;
+      border: none;
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-size: 14px;
+      cursor: pointer;
+      font-weight: 500;
+      transition: background 0.2s, transform 0.1s;
+    }
+    .btn:hover {
+      background: #1d4ed8;
+    }
+    .btn:active {
+      transform: scale(0.97);
+    }
+    .btn-sub {
+      background: #4b5563;
+    }
+    .btn-sub:hover {
+      background: #374151;
+    }
+    #counter {
+      font-size: 14px;
+      color: #93c5fd;
+      font-weight: bold;
+      letter-spacing: 0.5px;
+    }
+
+    /* メインステージ */
+    #stage {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      cursor: pointer;
+      position: relative;
+    }
+
+    /* 抽出された画像 */
+    #display-image {
+      max-width: 92%;
+      max-height: 92%;
+      object-fit: contain;
+      border-radius: 12px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.8), 0 0 20px rgba(59, 130, 246, 0.3);
+      display: none;
+      pointer-events: none;
+      animation: popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+
+    @keyframes popIn {
+      0% { transform: scale(0.8); opacity: 0; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+
+    /* 待機・抽選中グラフィックエリア */
+    #lottery-view {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+    }
+
+    .box-container {
+      position: relative;
+      width: 220px;
+      height: 220px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    /* 背景の光輪 */
+    .glow-ring {
+      position: absolute;
+      width: 260px;
+      height: 260px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(234, 179, 8, 0.35) 0%, rgba(234, 179, 8, 0) 70%);
+      opacity: 0.6;
+      transition: all 0.3s ease;
+    }
+
+    /* 宝箱・くじアイコン */
+    .lottery-icon {
+      width: 170px;
+      height: 170px;
+      filter: drop-shadow(0 15px 25px rgba(0, 0, 0, 0.5));
+      transition: transform 0.3s ease;
+    }
+
+    /* 抽選中のアニメーション */
+    .animating .glow-ring {
+      opacity: 1;
+      animation: pulseGlow 0.25s infinite alternate;
+    }
+    .animating .lottery-icon {
+      animation: lotteryRumble 0.12s infinite alternate ease-in-out;
+    }
+
+    @keyframes pulseGlow {
+      0% { transform: scale(0.9); filter: hue-rotate(0deg); }
+      100% { transform: scale(1.3); filter: hue-rotate(90deg); }
+    }
+
+    @keyframes lotteryRumble {
+      0% { transform: translate(-4px, -3px) rotate(-5deg) scale(1.05); }
+      50% { transform: translate(3px, 2px) rotate(4deg) scale(1.1); }
+      100% { transform: translate(-3px, 4px) rotate(-3deg) scale(1.08); }
+    }
+
+    #message {
+      font-size: 26px;
+      color: #e2e8f0;
+      text-align: center;
+      line-height: 1.6;
+      padding: 20px;
+      pointer-events: none;
+    }
+
+    .sub-guide {
+      font-size: 18px;
+      color: #94a3b8;
+      margin-top: 15px;
+    }
+
+    /* ローディング表示 */
+    #loading-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.8);
+      display: none;
+      justify-content: center;
+      align-items: center;
+      flex-direction: column;
+      font-size: 18px;
+      z-index: 200;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 設定・操作バー -->
+  <div id="top-bar" onmousedown="event.stopPropagation()" ontouchstart="event.stopPropagation()">
+    <button class="btn" onclick="openFileDialog()">設定：画像を選択</button>
+    <button class="btn btn-sub" onclick="resetLottery()">最初からやり直す</button>
+    <span id="counter">未設定</span>
+  </div>
+
+  <!-- 画像複数選択用インプット（フォトライブラリやファイルから複数選択可能） -->
+  <input type="file" id="file-input" accept="image/*,.heic,.heif,.tif,.tiff" multiple style="display: none;" onchange="handleFileSelect(event)">
+
+  <!-- 抽選表示エリア -->
+  <div id="stage" onmousedown="handleStageMouseDown(event)" ontouchstart="handleStageTouchStart(event)">
+    <!-- 初期メッセージ -->
+    <div id="message">
+      左上の「設定：画像を選択」から<br>くじ引きに使用する画像を複数指定してください
+    </div>
+
+    <!-- 抽選イメージ・アニメーション表示ブロック -->
+    <div id="lottery-view">
+      <div class="box-container" id="box-wrapper">
+        <div class="glow-ring"></div>
+        <svg class="lottery-icon" viewBox="0 0 100 100">
+          <defs>
+            <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#fde047"/>
+              <stop offset="50%" stop-color="#eab308"/>
+              <stop offset="100%" stop-color="#a16207"/>
+            </linearGradient>
+            <linearGradient id="box" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stop-color="#dc2626"/>
+              <stop offset="100%" stop-color="#991b1b"/>
+            </linearGradient>
+          </defs>
+          <rect x="15" y="42" width="70" height="46" rx="6" fill="url(#box)" stroke="#7f1d1d" stroke-width="2"/>
+          <path d="M12 42 Q50 18 88 42 Z" fill="url(#gold)" stroke="#854d0e" stroke-width="2"/>
+          <rect x="42" y="32" width="16" height="56" fill="url(#gold)"/>
+          <rect x="15" y="58" width="70" height="12" fill="url(#gold)"/>
+          <circle cx="50" cy="64" r="8" fill="#f8fafc" stroke="#64748b" stroke-width="2"/>
+          <circle cx="50" cy="64" r="3.5" fill="#0f172a"/>
+          <path d="M80 18 L83 26 L91 29 L83 32 L80 40 L77 32 L69 29 L77 26 Z" fill="#fef08a"/>
+          <path d="M18 22 L20 27 L25 29 L20 31 L18 36 L16 31 L11 29 L16 27 Z" fill="#fef08a"/>
+        </svg>
+      </div>
+      <div id="lottery-status-text" class="sub-guide">画面タップ または Spaceキーで抽選開始</div>
+    </div>
+
+    <!-- 抽出された画像 -->
+    <img id="display-image" alt="抽選結果画像">
+  </div>
+
+  <!-- ロード中 -->
+  <div id="loading-overlay">
+    <div id="loading-text">画像を準備中...</div>
+  </div>
+
+  <script>
+    const VALID_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.heic', '.heif', '.tif', '.tiff'];
+
+    let state = 'UNSET';
+    let allFiles = [];
+    let pool = [];
+    let currentObjectUrl = null;
+
+    const displayImg = document.getElementById('display-image');
+    const messageEl = document.getElementById('message');
+    const lotteryView = document.getElementById('lottery-view');
+    const boxWrapper = document.getElementById('box-wrapper');
+    const lotteryStatusText = document.getElementById('lottery-status-text');
+    const counterEl = document.getElementById('counter');
+    const loadingOverlay = document.getElementById('loading-overlay');
+    const loadingText = document.getElementById('loading-text');
+
+    /* ========================================================
+       Web Audio API による効果音生成
+       ======================================================== */
+    let audioCtx = null;
+    function initAudio() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+    }
+
+    function playRollSound(duration = 3.0) {
+      if (!audioCtx) return;
+      const startTime = audioCtx.currentTime;
+      const totalHits = 48;
+
+      for (let i = 0; i < totalHits; i++) {
+        const progress = i / totalHits;
+        const hitTime = startTime + Math.pow(progress, 1.3) * (duration - 0.15);
+
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(110 + Math.random() * 30, hitTime);
+        osc.frequency.exponentialRampToValueAtTime(35, hitTime + 0.05);
+
+        gain.gain.setValueAtTime(0.25, hitTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, hitTime + 0.05);
+
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+
+        osc.start(hitTime);
+        osc.stop(hitTime + 0.06);
+      }
+    }
+
+    function playDecideSound() {
+      if (!audioCtx) return;
+      const now = audioCtx.currentTime;
+
+      const chord = [523.25, 659.25, 783.99, 1046.50];
+      chord.forEach((freq, idx) => {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, now + idx * 0.04);
+
+        gain.gain.setValueAtTime(0.2, now + idx * 0.04);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
+
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+
+        osc.start(now + idx * 0.04);
+        osc.stop(now + 1.3);
+      });
+
+      const sparkle = audioCtx.createOscillator();
+      const sGain = audioCtx.createGain();
+      sparkle.type = 'triangle';
+      sparkle.frequency.setValueAtTime(1500, now + 0.2);
+      sparkle.frequency.exponentialRampToValueAtTime(2600, now + 0.6);
+      sGain.gain.setValueAtTime(0.25, now + 0.2);
+      sGain.gain.exponentialRampToValueAtTime(0.001, now + 1.4);
+
+      sparkle.connect(sGain);
+      sGain.connect(audioCtx.destination);
+      sparkle.start(now + 0.2);
+      sparkle.stop(now + 1.5);
+    }
+
+    /* ========================================================
+       アプリロジック
+       ======================================================== */
+    function openFileDialog() {
+      document.getElementById('file-input').click();
+    }
+
+    // 複数画像ファイル選択時
+    async function handleFileSelect(event) {
+      const files = Array.from(event.target.files);
+      allFiles = files.filter(file => {
+        const ext = '.' + file.name.split('.').pop().toLowerCase();
+        return file.type.startsWith('image/') || VALID_EXTENSIONS.includes(ext);
+      });
+
+      if (allFiles.length === 0) {
+        alert('有効な画像ファイルが選択されませんでした。');
+        return;
+      }
+
+      resetLottery();
+    }
+
+    function showReadyView() {
+      state = 'READY_TO_DRAW';
+      displayImg.style.display = 'none';
+      messageEl.style.display = 'none';
+      lotteryView.style.display = 'flex';
+      boxWrapper.classList.remove('animating');
+      lotteryStatusText.textContent = '画面タップ または Spaceキーで抽選開始';
+      updateCounter();
+    }
+
+    function resetLottery() {
+      if (allFiles.length === 0) return;
+      pool = Array.from({ length: allFiles.length }, (_, i) => i);
+
+      if (currentObjectUrl) {
+        URL.revokeObjectURL(currentObjectUrl);
+        currentObjectUrl = null;
+      }
+      showReadyView();
+    }
+
+    function handleTrigger() {
+      initAudio();
+
+      if (state === 'READY_TO_DRAW') {
+        startLotteryAnimation();
+      } else if (state === 'SHOWING_RESULT') {
+        if (pool.length === 0) {
+          state = 'FINISHED';
+          displayImg.style.display = 'none';
+          lotteryView.style.display = 'none';
+          messageEl.style.display = 'block';
+          messageEl.innerHTML = '<span style="font-size: 48px; color: #f87171; font-weight: bold;">終了</span><br>すべての画像を抽出しました';
+          updateCounter();
+        } else {
+          showReadyView();
+        }
+      }
+    }
+
+    // マウスダウン
+    function handleStageMouseDown(event) {
+      if (event.button !== 0) return;
+      handleTrigger();
+    }
+
+    // タッチスクリーン用（iPad）
+    let lastTouchTime = 0;
+    function handleStageTouchStart(event) {
+      // 連続タップ等の二重発火を抑止
+      const now = Date.now();
+      if (now - lastTouchTime < 400) return;
+      lastTouchTime = now;
+      handleTrigger();
+    }
+
+    // Spaceキー
+    window.addEventListener('keydown', (event) => {
+      if (event.code === 'Space' && !event.repeat) {
+        event.preventDefault();
+        handleTrigger();
+      }
+    });
+
+    // 抽選アニメーション
+    async function startLotteryAnimation() {
+      state = 'DRAWING';
+      boxWrapper.classList.add('animating');
+      lotteryStatusText.textContent = '抽選中...';
+
+      playRollSound(3.0);
+
+      const randomIndex = Math.floor(Math.random() * pool.length);
+      const chosenFileIndex = pool.splice(randomIndex, 1)[0];
+      const targetFile = allFiles[chosenFileIndex];
+
+      await new Promise(resolve => setTimeout(resolve, 3000));
+
+      boxWrapper.classList.remove('animating');
+      await showImage(targetFile);
+
+      playDecideSound();
+      state = 'SHOWING_RESULT';
+      updateCounter();
+    }
+
+    // 画像の表示・変換処理
+    async function showImage(file) {
+      const ext = '.' + file.name.split('.').pop().toLowerCase();
+
+      if (currentObjectUrl) {
+        URL.revokeObjectURL(currentObjectUrl);
+        currentObjectUrl = null;
+      }
+
+      // HEIC変換
+      if (ext === '.heic' || ext === '.heif' || file.type === 'image/heic') {
+        loadingOverlay.style.display = 'flex';
+        loadingText.textContent = 'HEIC画像を変換中...';
+        try {
+          const blob = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.85 });
+          const singleBlob = Array.isArray(blob) ? blob[0] : blob;
+          currentObjectUrl = URL.createObjectURL(singleBlob);
+        } catch (e) {
+          console.error('HEIC conversion failed:', e);
+          alert('画像の変換に失敗しました: ' + file.name);
+          loadingOverlay.style.display = 'none';
+          return;
+        } finally {
+          loadingOverlay.style.display = 'none';
+        }
+      } else {
+        currentObjectUrl = URL.createObjectURL(file);
+      }
+
+      lotteryView.style.display = 'none';
+      displayImg.src = currentObjectUrl;
+      displayImg.style.display = 'block';
+    }
+
+    function updateCounter() {
+      if (allFiles.length === 0) {
+        counterEl.textContent = '未設定';
+      } else {
+        counterEl.textContent = `残り: ${pool.length} / ${allFiles.length} 枚`;
+      }
+    }
+  </script>
+</body>
+</html>
